@@ -28,14 +28,14 @@ export async function claimFromFaucet(
   if (!opts.force && isWithinCooldown(last, opts.cooldownHours)) {
     base.skipped = true;
     base.ok = true;
-    log.warn(`Lewati ${faucet.name} @ ${def.label}: masih dalam cooldown (claim terakhir ${last?.at})`);
+    log.warn(`Lewati ${faucet.name} @ ${def.label} untuk ${address}: masih dalam cooldown (claim terakhir ${last?.at})`);
     return base;
   }
 
   try {
     const result = await faucet.claim(network, address, opts.token, opts.dryRun);
     if (opts.dryRun) {
-      log.info(`[dry-run] ${faucet.name} @ ${def.label} akan mengirim: ${JSON.stringify(result.detail)}`);
+      log.info(`[dry-run] ${faucet.name} @ ${def.label} untuk ${address} akan mengirim: ${JSON.stringify(result.detail)}`);
       base.ok = true;
       return base;
     }
@@ -54,7 +54,7 @@ export async function claimFromFaucet(
     });
 
     if (result.txHash) {
-      log.ok(`Claim ${faucet.name} @ ${def.label} terkirim, tx: ${result.txHash}`);
+      log.ok(`Claim ${faucet.name} @ ${def.label} untuk ${address} terkirim, tx: ${result.txHash}`);
       log.info(`Explorer: ${base.explorerUrl}`);
       if (opts.wait) {
         log.info("Menunggu konfirmasi on-chain...");
@@ -64,7 +64,7 @@ export async function claimFromFaucet(
         else log.warn("Belum terkonfirmasi dalam batas waktu tunggu");
       }
     } else {
-      log.ok(`Claim ${faucet.name} @ ${def.label} diterima (faucet tidak mengembalikan txHash)`);
+      log.ok(`Claim ${faucet.name} @ ${def.label} untuk ${address} diterima (faucet tidak mengembalikan txHash)`);
     }
     base.ok = true;
     return base;
@@ -82,7 +82,7 @@ export async function claimFromFaucet(
       error: message,
     });
     base.error = message;
-    log.err(`Claim ${faucet.name} @ ${def.label} gagal: ${message}`);
+    log.err(`Claim ${faucet.name} @ ${def.label} untuk ${address} gagal: ${message}`);
     return base;
   }
 }

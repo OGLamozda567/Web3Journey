@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { cooldownHoursFromEnv } from "./config.js";
 import { NETWORK_IDS, NETWORKS, resolveRpcUrl } from "./networks.js";
 import { claimFromFaucet } from "./claim.js";
@@ -9,7 +10,19 @@ import type { FaucetToken, NetworkId } from "./types.js";
 
 const TOKENS: FaucetToken[] = ["eth", "usdc", "eurc", "cbbtc"];
 
-type Flags = Record<string, string | boolean>;
+type FlagValue = string | boolean | string[];
+type Flags = Record<string, FlagValue>;
+
+function pushFlag(flags: Flags, name: string, value: string): void {
+  const existing = flags[name];
+  if (existing === undefined) {
+    flags[name] = value;
+  } else if (Array.isArray(existing)) {
+    existing.push(value);
+  } else {
+    flags[name] = [existing as string, value];
+  }
+}
 
 function parseArgs(argv: string[]): { command: string; flags: Flags } {
   const flags: Flags = {};
@@ -19,9 +32,9 @@ function parseArgs(argv: string[]): { command: string; flags: Flags } {
     if (arg.startsWith("--")) {
       const eq = arg.indexOf("=");
       if (eq !== -1) {
-        flags[arg.slice(2, eq)] = arg.slice(eq + 1);
+        pushFlag(flags, arg.slice(2, eq), arg.slice(eq + 1));
       } else if (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
-        flags[arg.slice(2)] = argv[++i];
+        pushFlag(flags, arg.slice(2), argv[++i]);
       } else {
         flags[arg.slice(2)] = true;
       }
@@ -38,6 +51,13 @@ const strFlag = (flags: Flags, name: string, dflt?: string): string | undefined 
 const boolFlag = (flags: Flags, name: string): boolean =>
   flags[name] === true || flags[name] === "true";
 
+function strList(flags: Flags, name: string): string[] {
+  const value = flags[name];
+  if (value === undefined) return [];
+  const parts = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return parts.flatMap((s) => s.split(",")).map((s) => s.trim()).filter(Boolean);
+}
+
 function resolveNetworks(flags: Flags): NetworkId[] | null {
   const raw = strFlag(flags, "network");
   if (!raw) {
@@ -50,20 +70,46 @@ function resolveNetworks(flags: Flags): NetworkId[] | null {
   return null;
 }
 
-function resolveAddress(flags: Flags): string | null {
-  const address = strFlag(flags, "address");
-  if (!address || !isAddress(address)) {
-    log.err("--address wajib berupa alamat EVM yang valid, contoh: 0x1234...abcd (0x + 40 hex)");
-    return null;
+function resolveAddresses(flags: Flags): string[] {
+  const raw = [...strList(flags, "address")];
+  const file = strFlag(flags, "addresses-file");
+  if (file) {
+    let content: string;
+    try {
+      content = fs.readFileSync(file, "utf8");
+    } catch {
+      log.err(`Tidak bisa membaca --addresses-file: ${file}`);
+      return [];
+    }
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#")) raw.push(trimmed);
+    }
   }
-  return address;
+  const seen = new Set<string>();
+  const addresses: string[] = [];
+  for (const candidate of raw) {
+    if (!isAddress(candidate)) {
+      log.err(`Alamat tidak valid: ${candidate} (harus 0x + 40 karakter hex)`);
+      return [];
+    }
+    const key = candidate.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      addresses.push(candidate);
+    }
+  }
+  if (addresses.length === 0) {
+    log.err("--address wajib diisi: satu alamat, dipisah koma, diulang (--address 0xA --address 0xB), atau via --addresses-file <path>");
+  }
+  return addresses;
 }
 
 async function cmdClaim(flags: Flags): Promise<number> {
   const networks = resolveNetworks(flags);
   if (!networks) return 1;
-  const address = resolveAddress(flags);
-  if (!address) return 1;
+  const addresses = resolveAddresses(flags);
+  if (addresses.length === 0) return 1;
 
   const token = strFlag(flags, "token", "eth") as FaucetToken;
   if (!TOKENS.includes(token)) {
@@ -109,10 +155,12 @@ async function cmdClaim(flags: Flags): Promise<number> {
   };
 
   const outcomes = [];
-  for (const network of networks) {
-    for (const faucet of faucets) {
-      if (!faucet.networks.includes(network)) continue;
-      outcomes.push(await claimFromFaucet(network, faucet, address, opts));
+  for (const address of addresses) {
+    for (const network of networks) {
+      for (const faucet of faucets) {
+        if (!faucet.networks.includes(network)) continue;
+        outcomes.push(await claimFromFaucet(network, faucet, address, opts));
+      }
     }
   }
   const succeeded = outcomes.filter((o) => o.ok && !o.skipped).length;
@@ -125,17 +173,19 @@ async function cmdClaim(flags: Flags): Promise<number> {
 async function cmdBalance(flags: Flags): Promise<number> {
   const networks = resolveNetworks(flags);
   if (!networks) return 1;
-  const address = resolveAddress(flags);
-  if (!address) return 1;
+  const addresses = resolveAddresses(flags);
+  if (addresses.length === 0) return 1;
   let failed = 0;
-  for (const network of networks) {
-    const def = NETWORKS[network];
-    try {
-      const balance = await getBalanceEth(resolveRpcUrl(def), address);
-      log.info(`${def.label} (${def.id}, chainId ${def.chainId}) — saldo ${address}: ${balance} ETH`);
-    } catch (err) {
-      failed++;
-      log.err(`Gagal cek saldo di ${def.label}: ${err instanceof Error ? err.message : String(err)}`);
+  for (const address of addresses) {
+    for (const network of networks) {
+      const def = NETWORKS[network];
+      try {
+        const balance = await getBalanceEth(resolveRpcUrl(def), address);
+        log.info(`${def.label} (${def.id}, chainId ${def.chainId}) — saldo ${address}: ${balance} ETH`);
+      } catch (err) {
+        failed++;
+        log.err(`Gagal cek saldo ${address} di ${def.label}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
   return failed > 0 ? 1 : 0;
@@ -176,6 +226,11 @@ Pemakaian:
   npm run dev -- balance --network <sepolia|base-sepolia|all> --address <0x...>
   npm run dev -- history [--network <id>] [--address <0x...>] [--limit N]
   npm run dev -- networks
+
+Alamat bisa banyak sekaligus (cooldown/ledger tetap per alamat):
+  --address 0xA,0xB                      dipisah koma
+  --address 0xA --address 0xB            diulang
+  --addresses-file alamat.txt             satu alamat per baris, '#' = komentar
 
 Opsi claim:
   --faucet <cdp|custom|all>   faucet yang dipakai (default: all yang terkonfigurasi)

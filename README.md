@@ -35,6 +35,12 @@ npm run dev -- claim --network base-sepolia --address 0xAlamatKamu --faucet cdp 
 # claim di semua network sekaligus
 npm run dev -- claim --network all --address 0xAlamatKamu
 
+# claim untuk beberapa alamat sekaligus (cooldown/ledger tetap dihitung per alamat)
+# bisa dipisah koma, diulang, atau dari file (satu alamat per baris, '#' = komentar):
+npm run dev -- claim --network all --address 0xAlamatA,0xAlamatB --wait
+printf '0xAlamatA\n0xAlamatB\n' > alamat.txt
+npm run dev -- claim --network sepolia --addresses-file alamat.txt
+
 # preview request tanpa mengirim apa pun
 npm run dev -- claim --network all --address 0xAlamatKamu --dry-run
 
@@ -42,8 +48,8 @@ npm run dev -- claim --network all --address 0xAlamatKamu --dry-run
 npm run dev -- claim --network sepolia --address 0xAlamatKamu --force
 npm run dev -- claim --network sepolia --address 0xAlamatKamu --cooldown-hours 24
 
-# cek saldo
-npm run dev -- balance --network all --address 0xAlamatKamu
+# cek saldo (mendukung banyak alamat juga)
+npm run dev -- balance --network all --address 0xAlamatA,0xAlamatB
 
 # riwayat claim
 npm run dev -- history --limit 10
